@@ -1,31 +1,27 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 import sys
-import yaml
 import json
 import time
-import threading
 import os
 import re
 import rospy
 from std_msgs.msg import String
-from flask import Flask, request, make_response, jsonify
-import dialogflow
+import dialogflow_v2 as dialogflow
 from datetime import datetime
 
 reload(sys)
 sys.setdefaultencoding('utf-8')
 
-os.environ[
-    "GOOGLE_APPLICATION_CREDENTIALS"] = "socialrobot-hyu-reception-nyla-176b1cd7164b.json"  # reception
+import rospkg
 
-'''
-    Social Robot HYU
-    Homecare Bot DM (generator) model
-'''
+PACK_PATH = rospkg.RosPack().get_path("dm_generator")
 
-# initialize the flask app
-app = Flask(__name__)
+AUTH_KEY_HOMECARE_PATH = PACK_PATH + "/scripts/authkey/socialrobot-hyu-xdtlug-7fe2505e00b7.json"
+AUTH_KEY_RECEPTION_PATH = PACK_PATH + "/scripts/authkey/socialrobot-hyu-reception-nyla-a093501276ce.json"
 
+# os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = AUTH_KEY_HOMECARE_PATH
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = AUTH_KEY_RECEPTION_PATH
 
 def print_for_check(inout, data):
     print ''
@@ -74,19 +70,14 @@ def make_response_json(id, dialog):
 
 # START dialogflow_detect_intent_text
 def detect_intent_texts(project_id, session_id, texts, language_code):
-    import dialogflow_v2 as dialogflow
     session_client = dialogflow.SessionsClient()
 
     session = session_client.session_path(project_id, session_id)
 
     for text in texts:
-        text_input = dialogflow.types.TextInput(
-            text=text, language_code=language_code)
-
+        text_input = dialogflow.types.TextInput(text=text, language_code=language_code)
         query_input = dialogflow.types.QueryInput(text=text_input)
-
-        response = session_client.detect_intent(
-            session=session, query_input=query_input)
+        response = session_client.detect_intent(session=session, query_input=query_input)
 
     return response
 
@@ -116,7 +107,7 @@ def welcome_bye_intent_detect(response, social_context, name, intent):
             response.query_result.fulfillment_text = response.query_result.fulfillment_text + " 안녕히 가세요."
 
 
-def ros_callback(msg):
+def ros_callback_fn(msg):
     if msg.data != '':
         ros_input = json.loads(msg.data, encoding='utf-8')
 
@@ -210,7 +201,6 @@ def ros_callback(msg):
 
             final_output = make_response_json(id, robot_dialog)
 
-            task_completion_pub = rospy.Publisher('/taskCompletion', String, queue_size=10)
             task_completion_pub.publish(json.dumps(final_output, ensure_ascii=False, indent=4))
 
             print_for_check(" Output", final_output)
@@ -218,25 +208,13 @@ def ros_callback(msg):
 
 
 def run_subscriber():
-    threading.Thread(target=lambda: rospy.init_node('dm_node', disable_signals=True)).start()
-    rospy.Subscriber('/taskExecution', String, ros_callback)
+    global task_completion_pub
+    rospy.init_node('DM_reception_node')
+    task_completion_pub = rospy.Publisher('/taskCompletion', String, queue_size=10)
 
-
-# default route
-@app.route('/')
-def index():
-    msg = String()
-    msg.data = 1
-    return 'Social Robot Dialogflow HYU Homecare'
-
-
-# create a route for webhook
-@app.route('/reception', methods=['GET', 'POST'])
-def webhook():
-    run_subscriber()
-    return run_subscriber()
+    rospy.Subscriber('/taskExecution', String, ros_callback_fn)
+    rospy.spin()
 
 
 if __name__ == '__main__':
     run_subscriber()
-    app.run()
