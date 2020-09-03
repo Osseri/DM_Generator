@@ -1,29 +1,28 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 import sys
-import yaml
 import json
 import time
-import threading
 import os
 import re
 import rospy
 from std_msgs.msg import String
-from flask import Flask, request, make_response, jsonify
-import dialogflow
+import dialogflow_v2 as dialogflow
 from datetime import datetime
 
 reload(sys)
 sys.setdefaultencoding('utf-8')
 
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"]="socialrobot-hyu-xdtlug-eb5be21aa398.json" # homecare
 
-'''
-    Social Robot HYU
-    Homecare Bot DM (generator) model
-'''
+import rospkg
 
-# initialize the flask app
-app = Flask(__name__)
+PACK_PATH = rospkg.RosPack().get_path("dm_generator")
+
+AUTH_KEY_HOMECARE_PATH = PACK_PATH + "/scripts/authkey/socialrobot-hyu-xdtlug-7fe2505e00b7.json"
+AUTH_KEY_RECEPTION_PATH = PACK_PATH + "/scripts/authkey/socialrobot-hyu-reception-nyla-a093501276ce.json"
+
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = AUTH_KEY_HOMECARE_PATH
+# os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = AUTH_KEY_RECEPTION_PATH
 
 
 
@@ -74,20 +73,15 @@ def print_for_check(inout, data):
 
 # START dialogflow_detect_intent_text
 def detect_intent_texts(project_id, session_id, texts, language_code):
-    import dialogflow_v2 as dialogflow
     session_client = dialogflow.SessionsClient()
 
     session = session_client.session_path(project_id, session_id)
     # print('Session path: {}\n'.format(session))
 
     for text in texts:
-        text_input = dialogflow.types.TextInput(
-            text=text, language_code=language_code)
-
+        text_input = dialogflow.types.TextInput(text=text, language_code=language_code)
         query_input = dialogflow.types.QueryInput(text=text_input)
-
-        response = session_client.detect_intent(
-            session=session, query_input=query_input)
+        response = session_client.detect_intent(session=session, query_input=query_input)
 
     return response
 
@@ -132,7 +126,7 @@ def medication_scenario_intent_detect(response, social_context, name, intent):
         response.query_result.fulfillment_text = "간밤에 잘 주무셨어요?"
 
     elif intent == "transmit_information_reaction":
-        if not response.query_result.parameters.fields['no'].string_value and not response.query_result.parameters.fields['negative'].string_value:
+        if not response.query_result.parameters.fields['negative'].string_value:
             response.query_result.fulfillment_text = "푹 주무셨다니 다행이에요."
         else:
             response.query_result.fulfillment_text = "잘 못 주무셨다니 속상해요."
@@ -143,30 +137,29 @@ def medication_scenario_intent_detect(response, social_context, name, intent):
 
     elif intent == "check_information_meal":
         dialog = " 식사는 뭐 드셨나요?"
-        if not response.query_result.parameters.fields['state'].string_value:
-            if social_context['disease_status'] == "positive":
-                response.query_result.fulfillment_text = "좋은 소식이네요."+dialog
-            elif social_context['disease_status'] == "negative":
-                response.query_result.fulfillment_text = "안 좋은 소식이네요."+dialog
+        if response.query_result.parameters.fields['positive'].string_value:
+            response.query_result.fulfillment_text = "좋은 소식이네요."+dialog
+        elif response.query_result.parameters.fields['negative'].string_value:
+            response.query_result.fulfillment_text = "안 좋은 소식이네요."+dialog
 
     elif intent == "transmit_information_disease_advise":
         disease = social_context['disease_name']
         advice = social_context['disease_advice']
-        if response.query_result.parameters.fields['meal'].string_value:
-            response.query_result.fulfillment_text = "잘 하셨어요. "+disease+"에는 "+advice+" 중요한 거 아시죠?"
+        if not response.query_result.parameters.fields['good_meal'].string_value:
+            response.query_result.fulfillment_text = "조심하셔야 해요. "+disease+"에 "+advice+" 중요한 거 아시죠?"
         else:
-            response.query_result.fulfillment_text = disease+"에는 "+advice+" 중요한 거 아시죠?"
+            response.query_result.fulfillment_text = "잘 하셨어요. "+disease+"에 "+advice+" 중요한 거 아시죠?"
 
     elif intent == "check_information_health":
         task = social_context['task']
-        if response.query_result.parameters.fields['negative'].string_value == u'':
+        if not response.query_result.parameters.fields['negative'].string_value:
             response.query_result.fulfillment_text = "다행이에요. "+task+"은 하셨나요?"
         else:
-            response.query_result.fulfillment_text = "조심하셔야 해요. "+task+"은 하셨나요?"
+            response.query_result.fulfillment_text = "주의해주세요. "+task+"은 하셨나요?"
 
     elif intent == "transmit_information_health_advice":
         take = social_context['medicine_schedule']
-        if response.query_result.parameters.fields['negative'].string_value == u'':
+        if not response.query_result.parameters.fields['negative'].string_value:
             response.query_result.fulfillment_text = "잘 챙기셨네요. "+take+"하셔야 해요."
         else:
             response.query_result.fulfillment_text = "다음에는 빠뜨리시면 안 돼요. "+take+"하셔야 해요."
@@ -175,38 +168,41 @@ def medication_scenario_intent_detect(response, social_context, name, intent):
 def hospital_schedule_detect_intent(response, social_context, name, intent):
     if intent == "check_information_schedule":
         visit = social_context['visit_place']
+        if not response.query_result.parameters.fields['negative'].list_value:
+            response.query_result.fulfillment_text = "잘 지내셨다니 다행이에요."
+        else:
+            response.query_result.fulfillment_text = "잘 못 지내셨다니 슬퍼요."
+
         dialog = " 오늘 "+visit+" 방문하시는 날이었죠?"
-        if response.query_result.parameters.fields['adverb'].string_value:
-            response.query_result.fulfillment_text = response.query_result.fulfillment_text + dialog
+        response.query_result.fulfillment_text = response.query_result.fulfillment_text + dialog
 
     elif intent == "transmit_information_disease_regard":
         disease = social_context['disease_name']
         status = social_context['disease_status']
         appellation = social_context['appellation']
-        dialog = appellation+" "+disease+"이 "
+        dialog = appellation+" "+disease+" 상태가 "   # 어르신 고혈압이
         if status == "negative":
             dialog = dialog + "나빠지셨다고 들었어요."
         elif status == "positive":
             dialog = dialog + "좋아지셨다고 들었어요."
 
-        if response.query_result.parameters.fields['negative'].string_value == u'':
+        if response.query_result.parameters.fields['positive'].string_value != u'' or response.query_result.parameters.fields['go'].string_value != u'':
             response.query_result.fulfillment_text = "잘 하셨어요. " + dialog
         else:
-            response.query_result.fulfillment_text = "병원은 꼭 가셔야 해요. " + dialog
+            response.query_result.fulfillment_text = "꼭 가셔야 해요. " + dialog
 
     elif intent == "transmit_information_medicine":
         disease = social_context['disease_name']
         status = social_context['disease_status']
         appellation = social_context['appellation']
-        dialog = appellation+" "+disease+"이 "
+        dialog = appellation+" "+disease+" 상태가 "
         if status == "negative":
             response.query_result.fulfillment_text = dialog + "나빠지셔서 드시는 약이 바뀌었어요."
         elif status == "positive":
             response.query_result.fulfillment_text = dialog + "좋아지셔서 드시는 약이 바뀌었어요."
 
 
-
-def ros_callback(msg):
+def ros_callback_fn(msg):
     if msg.data != '':
         # convert ros message to json
         ros_input = json.loads(msg.data, encoding='utf-8')
@@ -230,10 +226,9 @@ def ros_callback(msg):
             medication_scenario_intent_detect(response, social_context, name, intent)
             hospital_schedule_detect_intent(response, social_context, name, intent)
 
-            robot_dialog = response.query_result.fulfillment_text
+            robot_dialog = response.query_result.fulfillment_text.encode("utf-8")
             final_output = make_response_json(id, robot_dialog)
 
-            task_completion_pub = rospy.Publisher('/taskCompletion', String, queue_size=10)
             task_completion_pub.publish(json.dumps(final_output, ensure_ascii=False, indent=4))
 
             print_for_check(" Output", final_output)
@@ -241,25 +236,12 @@ def ros_callback(msg):
 
 
 def run_subscriber():
-    threading.Thread(target=lambda: rospy.init_node('dm_node', disable_signals=True)).start()
-    rospy.Subscriber('/taskExecution', String, ros_callback)
-
-
-# default route
-@app.route('/')
-def index():
-    msg = String()
-    msg.data = 1
-    return 'Social Robot Dialogflow HYU Homecare'
-
-
-# create a route for webhook
-@app.route('/reception', methods=['GET', 'POST'])
-def webhook():
-    run_subscriber()
-    return run_subscriber()
+    global task_completion_pub
+    rospy.init_node('DM_homecare_node')
+    task_completion_pub = rospy.Publisher('/taskCompletion', String, queue_size=10)
+    rospy.Subscriber('/taskExecution', String, ros_callback_fn)
+    rospy.spin()
 
 
 if __name__ == '__main__':
     run_subscriber()
-    app.run()
